@@ -20,7 +20,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 1. Master Key & Session States
+# --- CẤU HÌNH ID GOOGLE SHEET TRỰC TIẾP (KHÔNG CẦN SECRETS 'SHEET_CONFIG') ---
+SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
 MASTER_EMAIL = "admin@school.com"
 MASTER_PASS = "123"
 
@@ -32,10 +33,10 @@ if 'user' not in st.session_state:
 # =============================================================================
 
 def get_gspread_client():
-    """Kết nối Google Sheets sử dụng st.secrets"""
+    """Kết nối Google Sheets sử dụng st.secrets [gcp_service_account]"""
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        # Đọc thông tin xác thực từ secrets.toml
+        # Đọc thông tin xác thực từ secrets.toml (Mục gcp_service_account)
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
@@ -47,13 +48,15 @@ def get_gspread_client():
 @st.cache_data(ttl=60)
 def load_data(sheet_name):
     """
-    Đọc dữ liệu từ Sheet với Cache TTL 60s.
+    Đọc dữ liệu từ Sheet bằng ID trực tiếp.
     """
     try:
         client = get_gspread_client()
         if not client: return pd.DataFrame()
         
-        sh = client.open(st.secrets["sheet_config"]["file_name"])
+        # SỬA QUAN TRỌNG: Mở bằng ID trực tiếp
+        sh = client.open_by_key(SHEET_ID)
+        
         try:
             ws = sh.worksheet(sheet_name)
         except gspread.WorksheetNotFound:
@@ -61,7 +64,6 @@ def load_data(sheet_name):
             ws = sh.add_worksheet(title=sheet_name, rows=1000, cols=20)
             # Khởi tạo header mặc định
             if sheet_name == 'Users':
-                # Cập nhật header có thêm SiSo
                 ws.append_row(['Email', 'Password', 'Role', 'HoTen', 'Lop', 'EmailPH', 'SiSo'])
             elif sheet_name == 'OKRs':
                 ws.append_row(['ID', 'Email', 'Lop', 'Dot', 'MucTieu', 'KetQua', 'TienDo', 'TrangThai', 'YeuCauXoa'])
@@ -86,7 +88,7 @@ def load_data(sheet_name):
         
         return df
     except Exception as e:
-        st.error(f"Không thể tải dữ liệu {sheet_name}: {e}")
+        st.error(f"Không thể tải dữ liệu {sheet_name}. Vui lòng kiểm tra ID Sheet và quyền truy cập Service Account. Lỗi: {e}")
         return pd.DataFrame()
 
 def clear_cache():
@@ -94,10 +96,10 @@ def clear_cache():
     st.cache_data.clear()
 
 def save_dataframe(sheet_name, df):
-    """Lưu toàn bộ DataFrame đè lên Sheet cũ (Dùng cho update lớn/delete)"""
+    """Lưu toàn bộ DataFrame đè lên Sheet cũ"""
     try:
         client = get_gspread_client()
-        sh = client.open(st.secrets["sheet_config"]["file_name"])
+        sh = client.open_by_key(SHEET_ID) # Dùng ID
         ws = sh.worksheet(sheet_name)
         ws.clear()
         ws.update([df.columns.values.tolist()] + df.values.tolist())
@@ -111,7 +113,7 @@ def append_data(sheet_name, row_data):
     """Thêm 1 dòng dữ liệu"""
     try:
         client = get_gspread_client()
-        sh = client.open(st.secrets["sheet_config"]["file_name"])
+        sh = client.open_by_key(SHEET_ID) # Dùng ID
         ws = sh.worksheet(sheet_name)
         ws.append_row(row_data)
         clear_cache()
@@ -123,13 +125,12 @@ def append_data(sheet_name, row_data):
 def batch_append_data(sheet_name, data_list):
     """
     IMPORT EXCEL: Thêm nhiều dòng cùng lúc (Batch Processing).
-    YÊU CẦU: data_list là list of lists.
     """
     try:
         client = get_gspread_client()
-        sh = client.open(st.secrets["sheet_config"]["file_name"])
+        sh = client.open_by_key(SHEET_ID) # Dùng ID
         ws = sh.worksheet(sheet_name)
-        ws.append_rows(data_list) # Hàm quan trọng để tối ưu import
+        ws.append_rows(data_list)
         clear_cache()
         return True
     except Exception as e:
@@ -184,7 +185,7 @@ def login_ui():
                 # 2. Check Database
                 df_users = load_data('Users')
                 if df_users.empty:
-                    st.error("Chưa có dữ liệu người dùng.")
+                    st.error("Chưa có dữ liệu người dùng (hoặc lỗi kết nối).")
                 else:
                     # Chuyển pass về string để so sánh
                     user_row = df_users[(df_users['Email'] == email) & (df_users['Password'].astype(str) == str(password))]
@@ -229,15 +230,19 @@ def admin_interface():
             with col_chart1:
                 st.caption("Tỷ lệ trạng thái OKR")
                 status_counts = df_okr['TrangThai'].value_counts()
-                fig, ax = plt.subplots()
-                ax.pie(status_counts, labels=status_counts.index, autopct='%1.1f%%', startangle=90)
-                ax.axis('equal')
-                st.pyplot(fig)
+                if not status_counts.empty:
+                    fig, ax = plt.subplots()
+                    ax.pie(status_counts, labels=status_counts.index, autopct='%1.1f%%', startangle=90)
+                    ax.axis('equal')
+                    st.pyplot(fig)
+                else:
+                    st.info("Chưa có OKR nào.")
             
             with col_chart2:
                 st.caption("Số lượng OKR theo Lớp")
-                class_counts = df_okr['Lop'].value_counts()
-                st.bar_chart(class_counts)
+                if 'Lop' in df_okr.columns:
+                    class_counts = df_okr['Lop'].value_counts()
+                    st.bar_chart(class_counts)
         else:
             st.info("Chưa có dữ liệu thống kê.")
 
@@ -348,7 +353,7 @@ def admin_interface():
         new_pass = st.text_input("Mật khẩu mới")
         if st.button("Đặt lại mật khẩu"):
             df_users = load_data('Users')
-            if email_reset in df_users['Email'].values:
+            if not df_users.empty and email_reset in df_users['Email'].values:
                 df_users.loc[df_users['Email'] == email_reset, 'Password'] = new_pass
                 save_dataframe('Users', df_users)
                 st.success(f"Đã đổi mật khẩu cho {email_reset}")
@@ -407,7 +412,7 @@ def generate_word_report(df_hs, df_okr, df_review, current_dot):
         doc.add_paragraph(f"Đợt: {current_dot}")
         
         # Bảng OKR
-        hs_okrs = df_okr[df_okr['Email'] == email_hs]
+        hs_okrs = df_okr[df_okr['Email'] == email_hs] if not df_okr.empty else pd.DataFrame()
         if not hs_okrs.empty:
             table = doc.add_table(rows=1, cols=4)
             table.style = 'Table Grid'
@@ -427,7 +432,7 @@ def generate_word_report(df_hs, df_okr, df_review, current_dot):
             doc.add_paragraph("(Chưa có OKR)")
 
         # Nhận xét
-        hs_rev = df_review[(df_review['Email'] == email_hs) & (df_review['Dot'] == current_dot)]
+        hs_rev = df_review[(df_review['Email'] == email_hs) & (df_review['Dot'] == current_dot)] if not df_review.empty else pd.DataFrame()
         doc.add_heading('Nhận xét & Đánh giá', level=2)
         if not hs_rev.empty:
             rev = hs_rev.iloc[0]
@@ -464,55 +469,59 @@ def teacher_interface():
     with tab1:
         st.subheader("Danh sách Học Sinh")
         df_users = load_data('Users')
-        df_hs = df_users[(df_users['Role'] == 'HocSinh') & (df_users['Lop'] == gv_lop)]
-        
-        st.metric("Sĩ số thực tế (trong App)", len(df_hs))
-        st.dataframe(df_hs[['Email', 'HoTen', 'EmailPH']])
-
-        with st.expander("➕ Import Học Sinh từ Excel"):
-            uploaded_file = st.file_uploader("Chọn file Excel (Cột: Email, HoTen, EmailPH)", type=['xlsx'])
-            if uploaded_file and st.button("Import HS"):
-                try:
-                    df_upload = pd.read_excel(uploaded_file)
-                    # Chuẩn bị dữ liệu (Batch)
-                    new_rows = []
-                    for _, row in df_upload.iterrows():
-                        # Kiểm tra trùng lặp cơ bản
-                        if str(row['Email']) not in df_users['Email'].values:
-                            # Users: Email, Pass, Role, HoTen, Lop, EmailPH, SiSo
-                            new_rows.append([
-                                str(row['Email']), "123", "HocSinh", str(row['HoTen']), gv_lop, str(row['EmailPH']), 0
-                            ])
-                    
-                    if new_rows:
-                        batch_append_data('Users', new_rows)
-                        st.success(f"Đã thêm {len(new_rows)} học sinh!")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.warning("Không có dữ liệu mới hoặc Email đã tồn tại.")
-                except Exception as e:
-                    st.error(f"Lỗi file: {e}")
-
-        with st.expander("✏️ Sửa Email / Xóa Học Sinh"):
-            hs_email_action = st.selectbox("Chọn HS", df_hs['Email'].unique())
-            col_a, col_b = st.columns(2)
+        if df_users.empty:
+             st.warning("Chưa có dữ liệu.")
+        else:
+            df_hs = df_users[(df_users['Role'] == 'HocSinh') & (df_users['Lop'] == gv_lop)]
             
-            with col_a:
-                new_email_input = st.text_input("Email Mới")
-                if st.button("Cập nhật Email"):
-                    if new_email_input and new_email_input != hs_email_action:
-                        if teacher_cascade_update_email(hs_email_action, new_email_input, gv_lop):
-                            st.success("Cập nhật thành công!")
-                            st.rerun()
+            st.metric("Sĩ số thực tế (trong App)", len(df_hs))
+            st.dataframe(df_hs[['Email', 'HoTen', 'EmailPH']])
 
-            with col_b:
-                if st.button("❌ Xóa Học Sinh Này", type="primary"):
-                    # Xóa Users
-                    df_users = df_users[df_users['Email'] != hs_email_action]
-                    save_dataframe('Users', df_users) 
-                    st.success("Đã xóa!")
-                    st.rerun()
+            with st.expander("➕ Import Học Sinh từ Excel"):
+                uploaded_file = st.file_uploader("Chọn file Excel (Cột: Email, HoTen, EmailPH)", type=['xlsx'])
+                if uploaded_file and st.button("Import HS"):
+                    try:
+                        df_upload = pd.read_excel(uploaded_file)
+                        # Chuẩn bị dữ liệu (Batch)
+                        new_rows = []
+                        for _, row in df_upload.iterrows():
+                            # Kiểm tra trùng lặp cơ bản
+                            if str(row['Email']) not in df_users['Email'].values:
+                                # Users: Email, Pass, Role, HoTen, Lop, EmailPH, SiSo
+                                new_rows.append([
+                                    str(row['Email']), "123", "HocSinh", str(row['HoTen']), gv_lop, str(row['EmailPH']), 0
+                                ])
+                        
+                        if new_rows:
+                            batch_append_data('Users', new_rows)
+                            st.success(f"Đã thêm {len(new_rows)} học sinh!")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.warning("Không có dữ liệu mới hoặc Email đã tồn tại.")
+                    except Exception as e:
+                        st.error(f"Lỗi file: {e}")
+
+            with st.expander("✏️ Sửa Email / Xóa Học Sinh"):
+                if not df_hs.empty:
+                    hs_email_action = st.selectbox("Chọn HS", df_hs['Email'].unique())
+                    col_a, col_b = st.columns(2)
+                    
+                    with col_a:
+                        new_email_input = st.text_input("Email Mới")
+                        if st.button("Cập nhật Email"):
+                            if new_email_input and new_email_input != hs_email_action:
+                                if teacher_cascade_update_email(hs_email_action, new_email_input, gv_lop):
+                                    st.success("Cập nhật thành công!")
+                                    st.rerun()
+
+                    with col_b:
+                        if st.button("❌ Xóa Học Sinh Này", type="primary"):
+                            # Xóa Users
+                            df_users = df_users[df_users['Email'] != hs_email_action]
+                            save_dataframe('Users', df_users) 
+                            st.success("Đã xóa!")
+                            st.rerun()
 
     # ---------------- TAB 2: PHÊ DUYỆT OKR ----------------
     with tab2:
@@ -521,106 +530,116 @@ def teacher_interface():
         df_reviews = load_data('Reviews')
         current_dot = get_current_dot()
 
-        # Lấy list HS trong lớp
-        hs_emails = df_hs['Email'].tolist()
-        selected_hs = st.selectbox("Chọn Học Sinh để chấm", hs_emails)
+        if df_users.empty:
+            st.warning("Chưa có học sinh.")
+        else:
+            hs_emails = df_hs['Email'].tolist()
+            selected_hs = st.selectbox("Chọn Học Sinh để chấm", hs_emails)
 
-        if selected_hs:
-            # Hiển thị OKR của HS
-            hs_okrs = df_okr[(df_okr['Email'] == selected_hs) & (df_okr['Dot'] == current_dot)]
-            
-            if hs_okrs.empty:
-                st.warning("Học sinh chưa tạo OKR đợt này.")
-            else:
-                st.markdown("#### Chi tiết OKR")
-                # Hiển thị màu sắc trạng thái
-                def color_status(val):
-                    color = 'black'
-                    if val == 'ChoDuyet': color = 'orange'
-                    elif val == 'DaDuyet': color = 'blue'
-                    elif val == 'HoanThanh': color = 'green'
-                    elif val == 'CanSua': color = 'red'
-                    return f'color: {color}; font-weight: bold'
+            if selected_hs:
+                # Hiển thị OKR của HS
+                hs_okrs = df_okr[(df_okr['Email'] == selected_hs) & (df_okr['Dot'] == current_dot)] if not df_okr.empty else pd.DataFrame()
+                
+                if hs_okrs.empty:
+                    st.warning("Học sinh chưa tạo OKR đợt này.")
+                else:
+                    st.markdown("#### Chi tiết OKR")
+                    # Hiển thị màu sắc trạng thái
+                    def color_status(val):
+                        color = 'black'
+                        if val == 'ChoDuyet': color = 'orange'
+                        elif val == 'DaDuyet': color = 'blue'
+                        elif val == 'HoanThanh': color = 'green'
+                        elif val == 'CanSua': color = 'red'
+                        return f'color: {color}; font-weight: bold'
 
-                st.dataframe(hs_okrs[['ID', 'MucTieu', 'KetQua', 'TienDo', 'TrangThai']].style.map(color_status, subset=['TrangThai']))
-                
-                # Form đánh giá
-                st.write("---")
-                st.markdown("#### 📝 Phần Phê Duyệt / Đánh Giá")
-                
-                # Tìm Review cũ
-                curr_review = df_reviews[(df_reviews['Email'] == selected_hs) & (df_reviews['Dot'] == current_dot)]
-                
-                rev_g1 = curr_review.iloc[0]['GV_Comment_1'] if not curr_review.empty else ""
-                stat_g1 = curr_review.iloc[0]['GV_Status_1'] if not curr_review.empty else "Chưa Duyệt"
-                rev_g2 = curr_review.iloc[0]['GV_Comment_2'] if not curr_review.empty else ""
-                stat_g2 = curr_review.iloc[0]['GV_Status_2'] if not curr_review.empty else "Chưa Đánh Giá"
-                ph_comment = curr_review.iloc[0]['PH_Comment'] if not curr_review.empty else ""
-
-                st.info(f"💬 Ý kiến Phụ Huynh: {ph_comment}")
-
-                col_d1, col_d2 = st.columns(2)
-                
-                with col_d1:
-                    st.markdown("**Lần 1: Duyệt Đề Xuất**")
-                    new_rv1 = st.text_area("Nhận xét Lần 1", value=rev_g1)
-                    new_st1 = st.selectbox("Trạng thái Lần 1", ["Chưa Duyệt", "Đồng Ý", "Cần Sửa"], index=["Chưa Duyệt", "Đồng Ý", "Cần Sửa"].index(stat_g1) if stat_g1 in ["Chưa Duyệt", "Đồng Ý", "Cần Sửa"] else 0)
-                
-                with col_d2:
-                    st.markdown("**Lần 2: Tổng Kết Cuối Đợt**")
-                    new_rv2 = st.text_area("Nhận xét Lần 2", value=rev_g2, disabled=(stat_g1 != "Đồng Ý"))
-                    new_st2 = st.selectbox("Trạng thái Lần 2", ["Chưa Đánh Giá", "Hoàn Thành", "Chưa Đạt"], index=["Chưa Đánh Giá", "Hoàn Thành", "Chưa Đạt"].index(stat_g2) if stat_g2 in ["Chưa Đánh Giá", "Hoàn Thành", "Chưa Đạt"] else 0, disabled=(stat_g1 != "Đồng Ý"))
-
-                if st.button("💾 Lưu Đánh Giá"):
-                    # Cập nhật bảng Reviews
-                    new_review_row = {
-                        'Email': selected_hs,
-                        'Dot': current_dot,
-                        'GV_Comment_1': new_rv1,
-                        'GV_Status_1': new_st1,
-                        'GV_Comment_2': new_rv2,
-                        'GV_Status_2': new_st2,
-                        'PH_Comment': ph_comment # Giữ nguyên
-                    }
+                    st.dataframe(hs_okrs[['ID', 'MucTieu', 'KetQua', 'TienDo', 'TrangThai']].style.map(color_status, subset=['TrangThai']))
                     
-                    target_okr_status = "ChoDuyet"
-                    if new_st1 == "Cần Sửa": target_okr_status = "CanSua"
-                    elif new_st1 == "Đồng Ý": target_okr_status = "DaDuyet"
-                    if new_st2 == "Hoàn Thành": target_okr_status = "HoanThanh"
+                    # Form đánh giá
+                    st.write("---")
+                    st.markdown("#### 📝 Phần Phê Duyệt / Đánh Giá")
                     
-                    # Cập nhật Reviews
-                    df_reviews = df_reviews[~((df_reviews['Email'] == selected_hs) & (df_reviews['Dot'] == current_dot))]
-                    append_data('Reviews', list(new_review_row.values()))
+                    # Tìm Review cũ
+                    curr_review = df_reviews[(df_reviews['Email'] == selected_hs) & (df_reviews['Dot'] == current_dot)] if not df_reviews.empty else pd.DataFrame()
                     
-                    # Cập nhật Status OKR
-                    hs_okrs_idx = df_okr[(df_okr['Email'] == selected_hs) & (df_okr['Dot'] == current_dot)].index
-                    if not hs_okrs_idx.empty:
-                        df_okr.loc[hs_okrs_idx, 'TrangThai'] = target_okr_status
-                        save_dataframe('OKRs', df_okr)
+                    rev_g1 = curr_review.iloc[0]['GV_Comment_1'] if not curr_review.empty else ""
+                    stat_g1 = curr_review.iloc[0]['GV_Status_1'] if not curr_review.empty else "Chưa Duyệt"
+                    rev_g2 = curr_review.iloc[0]['GV_Comment_2'] if not curr_review.empty else ""
+                    stat_g2 = curr_review.iloc[0]['GV_Status_2'] if not curr_review.empty else "Chưa Đánh Giá"
+                    ph_comment = curr_review.iloc[0]['PH_Comment'] if not curr_review.empty else ""
+
+                    st.info(f"💬 Ý kiến Phụ Huynh: {ph_comment}")
+
+                    col_d1, col_d2 = st.columns(2)
                     
-                    st.success("Đã lưu đánh giá!")
-                    st.rerun()
+                    with col_d1:
+                        st.markdown("**Lần 1: Duyệt Đề Xuất**")
+                        new_rv1 = st.text_area("Nhận xét Lần 1", value=rev_g1)
+                        idx1 = ["Chưa Duyệt", "Đồng Ý", "Cần Sửa"].index(stat_g1) if stat_g1 in ["Chưa Duyệt", "Đồng Ý", "Cần Sửa"] else 0
+                        new_st1 = st.selectbox("Trạng thái Lần 1", ["Chưa Duyệt", "Đồng Ý", "Cần Sửa"], index=idx1)
+                    
+                    with col_d2:
+                        st.markdown("**Lần 2: Tổng Kết Cuối Đợt**")
+                        new_rv2 = st.text_area("Nhận xét Lần 2", value=rev_g2, disabled=(stat_g1 != "Đồng Ý"))
+                        idx2 = ["Chưa Đánh Giá", "Hoàn Thành", "Chưa Đạt"].index(stat_g2) if stat_g2 in ["Chưa Đánh Giá", "Hoàn Thành", "Chưa Đạt"] else 0
+                        new_st2 = st.selectbox("Trạng thái Lần 2", ["Chưa Đánh Giá", "Hoàn Thành", "Chưa Đạt"], index=idx2, disabled=(stat_g1 != "Đồng Ý"))
+
+                    if st.button("💾 Lưu Đánh Giá"):
+                        # Cập nhật bảng Reviews
+                        new_review_row = {
+                            'Email': selected_hs,
+                            'Dot': current_dot,
+                            'GV_Comment_1': new_rv1,
+                            'GV_Status_1': new_st1,
+                            'GV_Comment_2': new_rv2,
+                            'GV_Status_2': new_st2,
+                            'PH_Comment': ph_comment # Giữ nguyên
+                        }
+                        
+                        target_okr_status = "ChoDuyet"
+                        if new_st1 == "Cần Sửa": target_okr_status = "CanSua"
+                        elif new_st1 == "Đồng Ý": target_okr_status = "DaDuyet"
+                        
+                        if new_st2 == "Hoàn Thành": target_okr_status = "HoanThanh"
+                        
+                        # Cập nhật Reviews
+                        if not df_reviews.empty:
+                            df_reviews = df_reviews[~((df_reviews['Email'] == selected_hs) & (df_reviews['Dot'] == current_dot))]
+                        
+                        append_data('Reviews', list(new_review_row.values()))
+                        
+                        # Cập nhật Status OKR
+                        hs_okrs_idx = df_okr[(df_okr['Email'] == selected_hs) & (df_okr['Dot'] == current_dot)].index
+                        if not hs_okrs_idx.empty:
+                            df_okr.loc[hs_okrs_idx, 'TrangThai'] = target_okr_status
+                            save_dataframe('OKRs', df_okr)
+                        
+                        st.success("Đã lưu đánh giá!")
+                        st.rerun()
 
     # ---------------- TAB 3: XỬ LÝ YÊU CẦU XÓA ----------------
     with tab3:
         st.subheader("Yêu cầu xóa OKR từ Học Sinh")
         # Lấy OKR của lớp có YeuCauXoa = TRUE
         df_okr = load_data('OKRs')
-        pending_deletes = df_okr[(df_okr['Lop'] == gv_lop) & (df_okr['YeuCauXoa'].astype(str) == 'TRUE')]
-        
-        if pending_deletes.empty:
-            st.info("Không có yêu cầu xóa nào.")
+        if not df_okr.empty:
+            pending_deletes = df_okr[(df_okr['Lop'] == gv_lop) & (df_okr['YeuCauXoa'].astype(str) == 'TRUE')]
+            
+            if pending_deletes.empty:
+                st.info("Không có yêu cầu xóa nào.")
+            else:
+                for idx, row in pending_deletes.iterrows():
+                    col_del1, col_del2 = st.columns([3, 1])
+                    with col_del1:
+                        st.write(f"**{row['Email']}**: {row['MucTieu']} (ID: {row['ID']})")
+                    with col_del2:
+                        if st.button(f"Chấp nhận xóa ##{row['ID']}"):
+                            df_okr = df_okr[df_okr['ID'] != row['ID']]
+                            save_dataframe('OKRs', df_okr)
+                            st.success("Đã xóa!")
+                            st.rerun()
         else:
-            for idx, row in pending_deletes.iterrows():
-                col_del1, col_del2 = st.columns([3, 1])
-                with col_del1:
-                    st.write(f"**{row['Email']}**: {row['MucTieu']} (ID: {row['ID']})")
-                with col_del2:
-                    if st.button(f"Chấp nhận xóa ##{row['ID']}"):
-                        df_okr = df_okr[df_okr['ID'] != row['ID']]
-                        save_dataframe('OKRs', df_okr)
-                        st.success("Đã xóa!")
-                        st.rerun()
+            st.info("Chưa có OKRs.")
 
     # ---------------- TAB 4: BÁO CÁO ----------------
     with tab4:
@@ -629,13 +648,17 @@ def teacher_interface():
         
         with col_rp1:
             st.markdown("#### Từng Học Sinh")
-            rp_hs = st.selectbox("Chọn HS xuất file", hs_emails, key='rp_hs_select')
-            if st.button("Tải file Word cá nhân"):
-                d_hs = df_hs[df_hs['Email'] == rp_hs]
-                d_okr = df_okr
-                d_rev = df_reviews
-                docx_file = generate_word_report(d_hs, d_okr, d_rev, current_dot)
-                st.download_button("Download .docx", docx_file, f"OKR_{rp_hs}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            if not df_hs.empty:
+                rp_hs = st.selectbox("Chọn HS xuất file", df_hs['Email'].unique(), key='rp_hs_select')
+                if st.button("Tải file Word cá nhân"):
+                    # Filter data
+                    d_hs = df_hs[df_hs['Email'] == rp_hs]
+                    d_okr = df_okr
+                    d_rev = df_reviews
+                    docx_file = generate_word_report(d_hs, d_okr, d_rev, current_dot)
+                    st.download_button("Download .docx", docx_file, f"OKR_{rp_hs}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            else:
+                st.warning("Chưa có học sinh.")
         
         with col_rp2:
             st.markdown("#### Cả Lớp (Gộp)")
@@ -661,7 +684,9 @@ def student_interface():
     
     # Load OKRs
     df_okr = load_data('OKRs')
-    my_okrs = df_okr[(df_okr['Email'] == user['Email']) & (df_okr['Dot'] == current_dot)]
+    my_okrs = pd.DataFrame()
+    if not df_okr.empty:
+        my_okrs = df_okr[(df_okr['Email'] == user['Email']) & (df_okr['Dot'] == current_dot)]
     
     # Tổng quan tiến độ
     if not my_okrs.empty:
@@ -681,7 +706,7 @@ def student_interface():
                     new_id = str(uuid.uuid4())[:8]
                     new_okr = [
                         new_id, user['Email'], user['Lop'], current_dot,
-                        obj, kr, 0, "MoiTao", "FALSE"
+                        obj, kr, 0, "ChoDuyet", "FALSE" # Mặc định ChoDuyet
                     ]
                     append_data('OKRs', new_okr)
                     st.success("Đã thêm!")
@@ -700,6 +725,7 @@ def student_interface():
                 if row['TrangThai'] == 'DaDuyet': status_color = "blue"
                 elif row['TrangThai'] == 'CanSua': status_color = "red"
                 elif row['TrangThai'] == 'HoanThanh': status_color = "green"
+                elif row['TrangThai'] == 'ChoDuyet': status_color = "orange"
                 
                 st.markdown(f"<h4 style='color:{status_color}'>{row['MucTieu']} <small>({row['TrangThai']})</small></h4>", unsafe_allow_html=True)
                 st.write(f"**KR:** {row['KetQua']}")
@@ -734,6 +760,10 @@ def parent_interface():
     
     # Tìm con
     df_users = load_data('Users')
+    if df_users.empty:
+        st.warning("Chưa có dữ liệu người dùng.")
+        return
+
     # Giả sử EmailPH trong bảng Users map với Email của người đang login
     children = df_users[df_users['EmailPH'] == user['Email']]
     
@@ -750,16 +780,18 @@ def parent_interface():
     
     # Xem OKR
     df_okr = load_data('OKRs')
-    child_okrs = df_okr[(df_okr['Email'] == child_email) & (df_okr['Dot'] == current_dot)]
-    
-    st.dataframe(child_okrs[['MucTieu', 'KetQua', 'TienDo', 'TrangThai']])
+    if not df_okr.empty:
+        child_okrs = df_okr[(df_okr['Email'] == child_email) & (df_okr['Dot'] == current_dot)]
+        st.dataframe(child_okrs[['MucTieu', 'KetQua', 'TienDo', 'TrangThai']])
+    else:
+        st.info("Chưa có dữ liệu OKRs.")
     
     # Xem & Gửi Nhận Xét
     st.write("---")
     st.subheader("Phản hồi từ Gia đình & Nhà trường")
     
     df_reviews = load_data('Reviews')
-    review_row = df_reviews[(df_reviews['Email'] == child_email) & (df_reviews['Dot'] == current_dot)]
+    review_row = df_reviews[(df_reviews['Email'] == child_email) & (df_reviews['Dot'] == current_dot)] if not df_reviews.empty else pd.DataFrame()
     
     gv_cmt = "Chưa có nhận xét"
     ph_cmt_old = ""
