@@ -21,7 +21,7 @@ st.set_page_config(
 )
 
 SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
-LOGO_URL = "https://cdn-icons-png.flaticon.com/512/3209/3209265.png"
+LOGO_URL = "logo FSC (1).png"
 
 # Schema chuẩn
 SCHEMA = {
