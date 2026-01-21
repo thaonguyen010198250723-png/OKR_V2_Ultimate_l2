@@ -125,7 +125,7 @@ def batch_append(sheet_name, list_data):
         return False
 
 # =============================================================================
-# 3. UTILITIES & SIDEBAR (GIỮ NGUYÊN TUYỆT ĐỐI)
+# 3. UTILITIES & SIDEBAR (GIỮ NGUYÊN)
 # =============================================================================
 
 def calculate_progress(actual, target):
@@ -172,7 +172,6 @@ def generate_word_report(hs_data_list, df_okr, df_rev, period):
             r = sub_rev.iloc[0]
             gv_cmt = r['NhanXet_CuoiKy']
             ph_cmt = r['PhanHoi_PH']
-            r['TrangThai_CuoiKy']
         doc.add_paragraph(f"1. Nhận xét của GVCN:")
         doc.add_paragraph(gv_cmt if gv_cmt else "...")
         doc.add_paragraph(f"2. Ý kiến của Gia đình:")
@@ -253,7 +252,7 @@ def login_ui():
                 st.error("Sai thông tin đăng nhập.")
 
 # =============================================================================
-# 4. MODULE: ADMIN (GIỮ NGUYÊN)
+# 4. ADMIN MODULE (GIỮ NGUYÊN)
 # =============================================================================
 
 def admin_view(period, is_open):
@@ -516,7 +515,7 @@ def teacher_view(period, is_open):
                 st.download_button("Download Class", bio, f"OKR_{my_class}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 # =============================================================================
-# 6. STUDENT MODULE (REWRITTEN & FIXED)
+# 6. STUDENT MODULE (UPDATED: REORDERED REVIEW SECTION)
 # =============================================================================
 
 def student_view(period, is_open):
@@ -528,8 +527,30 @@ def student_view(period, is_open):
     my_okrs = df_okr[(df_okr['Email'] == user['Email']) & (df_okr['Dot'] == period)]
     df_rev = load_data('FinalReviews')
     rev = df_rev[(df_rev['Email'] == user['Email']) & (df_rev['Dot'] == period)]
+
+    # --- PART 1: TỔNG KẾT & ĐÁNH GIÁ (UPDATED ORDER & VISUALS) ---
+    st.markdown("### 📝 Tổng kết & Đánh giá")
     
-    # 1. CREATE OKR (LOGIC GIỮ NGUYÊN)
+    # 1. Teacher Comment
+    gv_txt = "Chưa có nhận xét."
+    status_txt = "Chưa chốt"
+    if not rev.empty:
+        if rev.iloc[0]['NhanXet_CuoiKy']:
+            gv_txt = rev.iloc[0]['NhanXet_CuoiKy']
+        status_txt = rev.iloc[0]['TrangThai_CuoiKy']
+    
+    st.info(f"**🧑‍🏫 Nhận xét của Giáo viên ({status_txt}):**\n\n{gv_txt}")
+    
+    # 2. Parent Feedback
+    ph_txt = "Chưa có phản hồi."
+    if not rev.empty and rev.iloc[0]['PhanHoi_PH']:
+        ph_txt = rev.iloc[0]['PhanHoi_PH']
+    
+    st.warning(f"**👨‍👩‍👧‍👦 Phản hồi của Phụ huynh:**\n\n{ph_txt}")
+
+    st.divider()
+
+    # --- PART 2: CREATE OKR (KEEP LOGIC) ---
     if is_open:
         with st.expander("➕ Thêm Mục Tiêu & KR mới", expanded=True):
             with st.form("new_okr_hs"):
@@ -558,12 +579,11 @@ def student_view(period, is_open):
                     else:
                         st.warning("Vui lòng nhập đủ thông tin.")
 
-    # 2. DANH SÁCH & CẬP NHẬT (FIXED DECIMAL & ID LOGIC)
+    # --- PART 3: PROGRESS TRACKING (KEEP LOGIC) ---
     st.subheader("Tiến độ của em")
     if my_okrs.empty:
         st.info("Chưa có OKR nào.")
     else:
-        # Group by Objective
         objectives = my_okrs['MucTieu'].unique()
         for obj in objectives:
             with st.container(border=True):
@@ -573,54 +593,44 @@ def student_view(period, is_open):
                 for _, row in krs.iterrows():
                     st.divider()
                     
-                    # Header Info
                     stt_color = "green" if row['TrangThai'] == 'Đã duyệt' else "orange"
                     st.markdown(f"**KR: {row['KetQuaThenChot']}** <span style='color:{stt_color}'>({row['TrangThai']})</span>", unsafe_allow_html=True)
                     
                     c1, c2, c3 = st.columns([2, 3, 1])
                     c1.caption(f"Đích: {row['MucTieuSo']} {row['DonVi']}")
                     
-                    # Giá trị thực đạt hiện tại
                     current_act = float(row['ThucDat'])
                     
-                    # Logic Cập nhật (Chỉ hiện khi Đã duyệt & Đợt mở)
+                    # Update Logic
                     if is_open and row['TrangThai'] == 'Đã duyệt':
-                        # FIX 1: Number Input cho số thập phân
                         new_act = c2.number_input(
-                            label=f"Thực đạt ({row['DonVi']}) - ID: {row['ID']}", # Label Unique visually ignored but good for debug
+                            label=f"Thực đạt ({row['DonVi']}) - ID: {row['ID']}",
                             min_value=0.0,
                             value=current_act,
-                            step=0.1,         # Bước nhảy 0.1
-                            format="%.2f",    # Format hiển thị 2 số sau dấu phẩy
-                            key=f"act_{row['ID']}", # FIX 2: Key duy nhất theo ID
+                            step=0.1,
+                            format="%.2f",
+                            key=f"act_{row['ID']}",
                             label_visibility="collapsed"
                         )
                         
-                        # Tính % hiển thị ngay lập tức
                         prog_display = calculate_progress(new_act, row['MucTieuSo'])
                         c2.progress(int(prog_display))
                         c2.caption(f"{prog_display:.1f}%")
 
-                        # Nút Cập nhật
-                        if c3.button("Cập nhật", key=f"btn_up_{row['ID']}"): # FIX 2: Key duy nhất
-                            # FIX 2: Tìm index bằng ID
+                        if c3.button("Cập nhật", key=f"btn_up_{row['ID']}"):
                             idx = df_okr[df_okr['ID'] == row['ID']].index[0]
-                            
                             df_okr.at[idx, 'ThucDat'] = new_act
                             df_okr.at[idx, 'TienDo'] = prog_display
-                            
                             save_df('OKRs', df_okr)
-                            st.success("✅ Đã lưu!") # FIX 3: Thông báo
+                            st.success("✅ Đã lưu!")
                             time.sleep(0.5)
-                            st.rerun() # Refresh UI
+                            st.rerun()
                     else:
-                        # Read-only View
                         c2.progress(int(row['TienDo']))
                         c2.write(f"Đạt: {current_act}")
                         if row['TrangThai'] != 'Đã duyệt':
                             c3.info("Chờ duyệt")
 
-                    # Logic Xin Xóa
                     if is_open:
                         if row['YeuCauXoa'] == 'FALSE':
                             if c3.button("Xin xóa", key=f"req_{row['ID']}"):
@@ -631,16 +641,10 @@ def student_view(period, is_open):
                         else:
                             c3.warning("Đã xin xóa")
                     
-                    # Hiển thị nhận xét
                     if row['NhanXet_GV']:
                         st.caption(f"💡 GV: {row['NhanXet_GV']}")
                     if row['DiemHaiLong_PH'] > 0:
                         st.caption(f"⭐ PH chấm: {int(row['DiemHaiLong_PH'])} sao")
-
-    # Feedback Chung
-    if not rev.empty:
-        st.divider()
-        st.info(f"👨‍👩‍👧‍👦 Phản hồi chung của PH: {rev.iloc[0]['PhanHoi_PH']}")
 
 # =============================================================================
 # 7. MODULE: PARENT (GIỮ NGUYÊN)
