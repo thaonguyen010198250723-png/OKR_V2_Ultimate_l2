@@ -21,7 +21,7 @@ st.set_page_config(
 )
 
 SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
-LOGO_URL = "logo.png"
+LOGO_URL = "logo FSC.png"
 
 SCHEMA = {
     'Users': ['Email', 'Password', 'Role', 'HoTen', 'Lop', 'EmailPH', 'SiSo'],
@@ -184,7 +184,7 @@ def generate_word_report(hs_data_list, df_okr, df_rev, period):
 def sidebar_controller():
     with st.sidebar:
         try: st.image(LOGO_URL, width=80)
-        except: st.write("🏫 **SCHOOL OKR**")
+        except: st.write("🏫 **FPT SCHOOL OKR**")
         if st.session_state.user:
             u = st.session_state.user
             st.info(f"👤 {u['HoTen']}\nRole: {u['Role']}")
@@ -515,23 +515,22 @@ def teacher_view(period, is_open):
                 st.download_button("Download Class", bio, f"OKR_{my_class}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 # =============================================================================
-# 6. STUDENT MODULE (UPDATED: REORDERED REVIEW SECTION)
+# 6. STUDENT MODULE (REWRITTEN: FIXED DECIMAL & KEY ISSUE)
 # =============================================================================
 
 def student_view(period, is_open):
     user = st.session_state.user
     st.title(f"🎓 {user['HoTen']}")
     
-    # LOAD DATA
+    # Load data
     df_okr = load_data('OKRs')
     my_okrs = df_okr[(df_okr['Email'] == user['Email']) & (df_okr['Dot'] == period)]
     df_rev = load_data('FinalReviews')
     rev = df_rev[(df_rev['Email'] == user['Email']) & (df_rev['Dot'] == period)]
 
-    # --- PART 1: TỔNG KẾT & ĐÁNH GIÁ (UPDATED ORDER & VISUALS) ---
+    # --- 1. REVIEWS & FEEDBACK ---
     st.markdown("### 📝 Tổng kết & Đánh giá")
     
-    # 1. Teacher Comment
     gv_txt = "Chưa có nhận xét."
     status_txt = "Chưa chốt"
     if not rev.empty:
@@ -541,7 +540,6 @@ def student_view(period, is_open):
     
     st.info(f"**🧑‍🏫 Nhận xét của Giáo viên ({status_txt}):**\n\n{gv_txt}")
     
-    # 2. Parent Feedback
     ph_txt = "Chưa có phản hồi."
     if not rev.empty and rev.iloc[0]['PhanHoi_PH']:
         ph_txt = rev.iloc[0]['PhanHoi_PH']
@@ -550,7 +548,7 @@ def student_view(period, is_open):
 
     st.divider()
 
-    # --- PART 2: CREATE OKR (KEEP LOGIC) ---
+    # --- 2. CREATE OKR ---
     if is_open:
         with st.expander("➕ Thêm Mục Tiêu & KR mới", expanded=True):
             with st.form("new_okr_hs"):
@@ -579,7 +577,7 @@ def student_view(period, is_open):
                     else:
                         st.warning("Vui lòng nhập đủ thông tin.")
 
-    # --- PART 3: PROGRESS TRACKING (KEEP LOGIC) ---
+    # --- 3. OKR LIST & UPDATE ---
     st.subheader("Tiến độ của em")
     if my_okrs.empty:
         st.info("Chưa có OKR nào.")
@@ -603,11 +601,12 @@ def student_view(period, is_open):
                     
                     # Update Logic
                     if is_open and row['TrangThai'] == 'Đã duyệt':
+                        # FIX: Use step=0.01 and unique key
                         new_act = c2.number_input(
-                            label=f"Thực đạt ({row['DonVi']}) - ID: {row['ID']}",
+                            label=f"Thực đạt ({row['DonVi']})",
                             min_value=0.0,
                             value=current_act,
-                            step=0.1,
+                            step=0.01,
                             format="%.2f",
                             key=f"act_{row['ID']}",
                             label_visibility="collapsed"
@@ -618,6 +617,7 @@ def student_view(period, is_open):
                         c2.caption(f"{prog_display:.1f}%")
 
                         if c3.button("Cập nhật", key=f"btn_up_{row['ID']}"):
+                            # Update by ID
                             idx = df_okr[df_okr['ID'] == row['ID']].index[0]
                             df_okr.at[idx, 'ThucDat'] = new_act
                             df_okr.at[idx, 'TienDo'] = prog_display
