@@ -21,7 +21,7 @@ st.set_page_config(
 )
 
 SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
-LOGO_URL = "logo FSC.png"
+LOGO_URL = "logo.png"
 
 SCHEMA = {
     'Users': ['Email', 'Password', 'Role', 'HoTen', 'Lop', 'EmailPH', 'SiSo'],
@@ -632,4 +632,75 @@ def student_view(period, is_open):
                             c3.warning("Đã xin xóa")
                     
                     # Hiển thị nhận xét
-                    if row['Nha
+                    if row['NhanXet_GV']:
+                        st.caption(f"💡 GV: {row['NhanXet_GV']}")
+                    if row['DiemHaiLong_PH'] > 0:
+                        st.caption(f"⭐ PH chấm: {int(row['DiemHaiLong_PH'])} sao")
+
+    # Feedback Chung
+    if not rev.empty:
+        st.divider()
+        st.info(f"👨‍👩‍👧‍👦 Phản hồi chung của PH: {rev.iloc[0]['PhanHoi_PH']}")
+
+# =============================================================================
+# 7. MODULE: PARENT (GIỮ NGUYÊN)
+# =============================================================================
+
+def parent_view(period, is_open):
+    user = st.session_state.user
+    st.title(f"👨‍👩‍👧‍👦 PHHS: {user['ChildName']}")
+    df_okr = load_data('OKRs')
+    child_okrs = df_okr[(df_okr['Email'] == user['ChildEmail']) & (df_okr['Dot'] == period)]
+    st.subheader("Đánh giá từng KR")
+    if child_okrs.empty: st.info("Chưa có OKR")
+    else:
+        for _, row in child_okrs.iterrows():
+            with st.container(border=True):
+                c1, c2 = st.columns([3, 1])
+                c1.write(f"**KR:** {row['KetQuaThenChot']}")
+                c1.caption(f"Tiến độ: {row['TienDo']}%")
+                cur_star = int(row['DiemHaiLong_PH']) if row['DiemHaiLong_PH'] > 0 else 3
+                new_star = c2.slider(f"Sao ({row['ID']})", 1, 5, cur_star)
+                if c2.button("Lưu sao", key=f"star_{row['ID']}"):
+                    idx = df_okr[df_okr['ID'] == row['ID']].index[0]
+                    df_okr.at[idx, 'DiemHaiLong_PH'] = new_star
+                    save_df('OKRs', df_okr)
+                    st.success("Đã lưu!")
+    st.divider()
+    st.subheader("Phản hồi chung")
+    df_rev = load_data('FinalReviews')
+    rev_row = df_rev[(df_rev['Email'] == user['ChildEmail']) & (df_rev['Dot'] == period)]
+    gv_txt = rev_row.iloc[0]['NhanXet_CuoiKy'] if not rev_row.empty else "Chưa có."
+    st.info(f"🧑‍🏫 GV Nhận xét: {gv_txt}")
+    ph_old = rev_row.iloc[0]['PhanHoi_PH'] if not rev_row.empty else ""
+    with st.form("ph_fb"):
+        txt = st.text_area("Ý kiến gia đình:", value=ph_old)
+        if st.form_submit_button("Gửi phản hồi"):
+            if rev_row.empty: append_row('FinalReviews', [user['ChildEmail'], period, "", txt, "Chưa chốt"])
+            else:
+                idx = rev_row.index[0]
+                df_rev.at[idx, 'PhanHoi_PH'] = txt
+                save_df('FinalReviews', df_rev)
+            st.success("Đã gửi!")
+            st.rerun()
+
+# =============================================================================
+# 8. MAIN EXECUTION
+# =============================================================================
+
+def main():
+    if not st.session_state.user:
+        login_ui()
+    else:
+        period, is_open = sidebar_controller()
+        if not period:
+            st.warning("Vui lòng liên hệ Admin tạo đợt.")
+            return
+        role = st.session_state.user['Role']
+        if role == 'Admin': admin_view(period, is_open)
+        elif role == 'GiaoVien': teacher_view(period, is_open)
+        elif role == 'HocSinh': student_view(period, is_open)
+        elif role == 'PhuHuynh': parent_view(period, is_open)
+
+if __name__ == "__main__":
+    main()
