@@ -15,13 +15,12 @@ import uuid
 
 st.set_page_config(
     page_title="Hệ thống Quản lý OKR",
-    page_icon="🏫",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
-LOGO_URL = "logo.png"
+LOGO_URL = "logo FSC.png"
 
 SCHEMA = {
     'Users': ['Email', 'Password', 'Role', 'HoTen', 'Lop', 'EmailPH', 'SiSo'],
@@ -36,7 +35,7 @@ if 'user' not in st.session_state:
     st.session_state.user = None
 
 # =============================================================================
-# 2. XỬ LÝ DỮ LIỆU & BACKEND AN TOÀN (UPDATED)
+# 2. XỬ LÝ DỮ LIỆU & BACKEND (GIỮ NGUYÊN CŨ + THÊM HÀM MỚI)
 # =============================================================================
 
 def get_client():
@@ -85,15 +84,14 @@ def load_data(sheet_name):
 def clear_cache():
     st.cache_data.clear()
 
-# --- SAFE FUNCTIONS (NEW) ---
+# --- SAFE FUNCTIONS FOR USERS (GIỮ NGUYÊN TỪ PHIÊN BẢN TRƯỚC) ---
 
 def safe_delete_user(email):
-    """Xóa dòng User dựa trên Email an toàn bằng gspread"""
     try:
         client = get_client()
         sh = client.open_by_key(SHEET_ID)
         ws = sh.worksheet('Users')
-        cell = ws.find(email, in_column=1) # Cột Email là cột 1
+        cell = ws.find(email, in_column=1)
         if cell:
             ws.delete_rows(cell.row)
             clear_cache()
@@ -104,19 +102,13 @@ def safe_delete_user(email):
         return False
 
 def safe_update_user(email, col_name, new_val):
-    """Cập nhật 1 ô dữ liệu của User an toàn"""
     try:
         client = get_client()
         sh = client.open_by_key(SHEET_ID)
         ws = sh.worksheet('Users')
-        
-        # Map column name to index (1-based)
         headers = SCHEMA['Users']
-        try:
-            col_idx = headers.index(col_name) + 1
-        except ValueError:
-            return False
-            
+        try: col_idx = headers.index(col_name) + 1
+        except ValueError: return False
         cell = ws.find(email, in_column=1)
         if cell:
             ws.update_cell(cell.row, col_idx, new_val)
@@ -127,10 +119,40 @@ def safe_update_user(email, col_name, new_val):
         st.error(f"Lỗi cập nhật user: {e}")
         return False
 
-# --- LEGACY HELPERS (KEPT FOR COMPATIBILITY BUT USED CAREFULLY) ---
+# --- 🔥 NEW: SAFE UPDATE FOR OKR PROGRESS (NHIỆM VỤ 1) ---
+
+def safe_update_okr_progress(okr_id, new_actual, new_progress):
+    """
+    Cập nhật tiến độ OKR an toàn bằng cách tìm chính xác ID trên Sheet.
+    Không dùng save_df để tránh ghi đè dữ liệu.
+    """
+    try:
+        client = get_client()
+        sh = client.open_by_key(SHEET_ID)
+        ws = sh.worksheet('OKRs')
+        
+        # Tìm ô chứa ID (Cột 1)
+        cell = ws.find(okr_id, in_column=1)
+        
+        if cell:
+            # Cột 8: ThucDat, Cột 10: TienDo (Theo Schema 1-based index)
+            # Schema: ID, Email, Lop, Dot, MucTieu, KR, Target, ThucDat(8), Unit, TienDo(10)...
+            
+            # Cập nhật ThucDat
+            ws.update_cell(cell.row, 8, new_actual)
+            # Cập nhật TienDo
+            ws.update_cell(cell.row, 10, new_progress)
+            
+            clear_cache()
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Lỗi cập nhật tiến độ: {e}")
+        return False
+
+# --- LEGACY HELPERS ---
 
 def save_df(sheet_name, df):
-    """Ghi đè Sheet (Chỉ dùng khi update batch lớn hoặc các bảng không phải Users)"""
     try:
         client = get_client()
         ws = client.open_by_key(SHEET_ID).worksheet(sheet_name)
@@ -170,7 +192,7 @@ def batch_append(sheet_name, list_data):
         return False
 
 # =============================================================================
-# 3. UTILITIES & SIDEBAR
+# 3. UTILITIES & SIDEBAR (GIỮ NGUYÊN)
 # =============================================================================
 
 def calculate_progress(actual, target):
@@ -229,7 +251,7 @@ def generate_word_report(hs_data_list, df_okr, df_rev, period):
 def sidebar_controller():
     with st.sidebar:
         try: st.image(LOGO_URL, width=80)
-        except: st.write("🏫 **SCHOOL OKR**")
+        except: st.write("**FPT SCHOOL OKR**")
         if st.session_state.user:
             u = st.session_state.user
             st.info(f"👤 {u['HoTen']}\nRole: {u['Role']}")
@@ -246,17 +268,14 @@ def sidebar_controller():
             is_open = (status == 'Mở')
             if is_open: st.success(f"Trạng thái: {status} 🟢")
             else: st.error(f"Trạng thái: {status} 🔒")
-            
             with st.expander("🔑 Đổi mật khẩu"):
                 with st.form("cp"):
                     np = st.text_input("Mật khẩu mới", type="password")
                     if st.form_submit_button("Lưu"):
-                        # Use safe update for password
                         target = u['ChildEmail'] if u['Role'] == 'PhuHuynh' else u['Email']
                         if safe_update_user(target, 'Password', np):
                             st.success("Đổi thành công!")
-                        else:
-                            st.error("Lỗi cập nhật.")
+                        else: st.error("Lỗi cập nhật.")
             st.divider()
             if st.button("Đăng xuất", use_container_width=True):
                 st.session_state.user = None
@@ -296,7 +315,7 @@ def login_ui():
                 st.error("Sai thông tin đăng nhập.")
 
 # =============================================================================
-# 4. MODULE: ADMIN (SỬ DỤNG SAFE FUNCTIONS)
+# 4. ADMIN MODULE (GIỮ NGUYÊN)
 # =============================================================================
 
 def admin_view(period, is_open):
@@ -363,8 +382,7 @@ def admin_view(period, is_open):
                     if safe_delete_user(del_gv):
                         st.success("Đã xóa!")
                         st.rerun()
-                    else:
-                        st.error("Lỗi xóa.")
+                    else: st.error("Lỗi xóa.")
         with c2:
             st.write("Thêm GV")
             with st.form("add_gv"):
@@ -393,7 +411,7 @@ def admin_view(period, is_open):
                     st.rerun()
 
 # =============================================================================
-# 5. TEACHER MODULE (SAFE UPDATES)
+# 5. TEACHER MODULE (GIỮ NGUYÊN)
 # =============================================================================
 
 def teacher_view(period, is_open):
@@ -403,8 +421,6 @@ def teacher_view(period, is_open):
     if not my_class:
         st.error("Tài khoản chưa có Lớp.")
         return
-    
-    # Load data for read
     df_users_all = load_data('Users')
     df_hs = df_users_all[(df_users_all['Role'] == 'HocSinh') & (df_users_all['Lop'] == my_class)]
     df_okr = load_data('OKRs')
@@ -505,7 +521,6 @@ def teacher_view(period, is_open):
                     rst = st.checkbox("Reset Pass (123)")
                     dele = st.checkbox("Xóa Tài khoản")
                     if st.form_submit_button("Thực hiện"):
-                        # SAFE LOGIC USING HELPER FUNCTIONS
                         if dele:
                             if safe_delete_user(sel_hs):
                                 st.success("Đã xóa!")
@@ -523,9 +538,7 @@ def teacher_view(period, is_open):
                             if success:
                                 st.success("Cập nhật thành công!")
                                 st.rerun()
-                            else:
-                                st.error("Có lỗi xảy ra khi cập nhật.")
-
+                            else: st.error("Lỗi cập nhật.")
         with c2:
             st.markdown("#### ➕ Thêm HS")
             with st.form("add_hs_manual"):
@@ -566,48 +579,41 @@ def teacher_view(period, is_open):
                 st.download_button("Download Class", bio, f"OKR_{my_class}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 # =============================================================================
-# 6. STUDENT MODULE (FIXED & REORGANIZED)
+# 6. STUDENT MODULE (FIXED & SAFE UPDATE)
 # =============================================================================
 
 def student_view(period, is_open):
     user = st.session_state.user
     st.title(f"🎓 {user['HoTen']}")
     
-    # Load data
     df_okr = load_data('OKRs')
     my_okrs = df_okr[(df_okr['Email'] == user['Email']) & (df_okr['Dot'] == period)]
     df_rev = load_data('FinalReviews')
     rev = df_rev[(df_rev['Email'] == user['Email']) & (df_rev['Dot'] == period)]
 
-    # --- 1. REVIEWS & FEEDBACK (UPDATED ORDER) ---
+    # 1. REVIEW & FEEDBACK
     st.markdown("### 📝 Tổng kết & Đánh giá")
-    
     gv_txt = "Chưa có nhận xét."
     status_txt = "Chưa chốt"
     if not rev.empty:
-        if rev.iloc[0]['NhanXet_CuoiKy']:
-            gv_txt = rev.iloc[0]['NhanXet_CuoiKy']
+        if rev.iloc[0]['NhanXet_CuoiKy']: gv_txt = rev.iloc[0]['NhanXet_CuoiKy']
         status_txt = rev.iloc[0]['TrangThai_CuoiKy']
     
     st.info(f"**🧑‍🏫 Nhận xét của Giáo viên ({status_txt}):**\n\n{gv_txt}")
     
     ph_txt = "Chưa có phản hồi."
-    if not rev.empty and rev.iloc[0]['PhanHoi_PH']:
-        ph_txt = rev.iloc[0]['PhanHoi_PH']
-    
+    if not rev.empty and rev.iloc[0]['PhanHoi_PH']: ph_txt = rev.iloc[0]['PhanHoi_PH']
     st.warning(f"**👨‍👩‍👧‍👦 Phản hồi của Phụ huynh:**\n\n{ph_txt}")
-
     st.divider()
 
-    # --- 2. CREATE OKR ---
+    # 2. CREATE OKR (USE UUID)
     if is_open:
         with st.expander("➕ Thêm Mục Tiêu & KR mới", expanded=True):
             with st.form("new_okr_hs"):
                 existing_objs = my_okrs['MucTieu'].unique().tolist()
                 c_obj1, c_obj2 = st.columns([1, 1])
                 obj_input = c_obj1.text_input("Mục tiêu (Mới hoặc copy tên cũ)", placeholder="VD: Học tập tốt")
-                if existing_objs:
-                    c_obj2.info(f"Mục tiêu đã có: {', '.join(existing_objs)}")
+                if existing_objs: c_obj2.info(f"Mục tiêu đã có: {', '.join(existing_objs)}")
                 
                 kr_input = st.text_input("Kết quả then chốt (KR)")
                 c1, c2 = st.columns(2)
@@ -617,21 +623,18 @@ def student_view(period, is_open):
                 if st.form_submit_button("Lưu OKR"):
                     if obj_input and kr_input:
                         is_dup = not my_okrs[(my_okrs['MucTieu'] == obj_input) & (my_okrs['KetQuaThenChot'] == kr_input)].empty
-                        if is_dup:
-                            st.error("❌ OKR này đã tồn tại!")
+                        if is_dup: st.error("❌ OKR này đã tồn tại!")
                         else:
-                            uid = uuid.uuid4().hex[:8]
+                            uid = str(uuid.uuid4())
                             append_row('OKRs', [uid, user['Email'], user['Lop'], period, obj_input, kr_input, tgt, 0.0, unit, 0.0, "Chờ duyệt", "FALSE", "", 0, ""])
                             st.success("✅ Đã thêm thành công!")
                             time.sleep(0.5)
                             st.rerun()
-                    else:
-                        st.warning("Vui lòng nhập đủ thông tin.")
+                    else: st.warning("Vui lòng nhập đủ thông tin.")
 
-    # --- 3. OKR LIST & UPDATE ---
+    # 3. LIST & UPDATE (USE SAFE UPDATE)
     st.subheader("Tiến độ của em")
-    if my_okrs.empty:
-        st.info("Chưa có OKR nào.")
+    if my_okrs.empty: st.info("Chưa có OKR nào.")
     else:
         objectives = my_okrs['MucTieu'].unique()
         for obj in objectives:
@@ -641,7 +644,6 @@ def student_view(period, is_open):
                 
                 for _, row in krs.iterrows():
                     st.divider()
-                    
                     stt_color = "green" if row['TrangThai'] == 'Đã duyệt' else "orange"
                     st.markdown(f"**KR: {row['KetQuaThenChot']}** <span style='color:{stt_color}'>({row['TrangThai']})</span>", unsafe_allow_html=True)
                     
@@ -650,9 +652,7 @@ def student_view(period, is_open):
                     
                     current_act = float(row['ThucDat'])
                     
-                    # Update Logic
                     if is_open and row['TrangThai'] == 'Đã duyệt':
-                        # FIX: Use step=0.01 and unique key
                         new_act = c2.number_input(
                             label=f"Thực đạt ({row['DonVi']})",
                             min_value=0.0,
@@ -662,27 +662,22 @@ def student_view(period, is_open):
                             key=f"act_{row['ID']}",
                             label_visibility="collapsed"
                         )
-                        
                         prog_display = calculate_progress(new_act, row['MucTieuSo'])
                         c2.progress(int(prog_display))
                         c2.caption(f"{prog_display:.1f}%")
 
                         if c3.button("Cập nhật", key=f"btn_up_{row['ID']}"):
-                            # Update by ID - Uses full save currently as OKR safe update is complex, 
-                            # but users are protected by safe functions elsewhere.
-                            # Finding global index first to be safe.
-                            idx = df_okr[df_okr['ID'] == row['ID']].index[0]
-                            df_okr.at[idx, 'ThucDat'] = new_act
-                            df_okr.at[idx, 'TienDo'] = prog_display
-                            save_df('OKRs', df_okr)
-                            st.success("✅ Đã lưu!")
-                            time.sleep(0.5)
-                            st.rerun()
+                            # SAFE UPDATE CALL
+                            if safe_update_okr_progress(row['ID'], new_act, prog_display):
+                                st.success("✅ Đã lưu!")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error("Lỗi cập nhật. Vui lòng thử lại.")
                     else:
                         c2.progress(int(row['TienDo']))
                         c2.write(f"Đạt: {current_act}")
-                        if row['TrangThai'] != 'Đã duyệt':
-                            c3.info("Chờ duyệt")
+                        if row['TrangThai'] != 'Đã duyệt': c3.info("Chờ duyệt")
 
                     if is_open:
                         if row['YeuCauXoa'] == 'FALSE':
@@ -691,13 +686,10 @@ def student_view(period, is_open):
                                 df_okr.at[idx, 'YeuCauXoa'] = 'TRUE'
                                 save_df('OKRs', df_okr)
                                 st.rerun()
-                        else:
-                            c3.warning("Đã xin xóa")
+                        else: c3.warning("Đã xin xóa")
                     
-                    if row['NhanXet_GV']:
-                        st.caption(f"💡 GV: {row['NhanXet_GV']}")
-                    if row['DiemHaiLong_PH'] > 0:
-                        st.caption(f"⭐ PH chấm: {int(row['DiemHaiLong_PH'])} sao")
+                    if row['NhanXet_GV']: st.caption(f"💡 GV: {row['NhanXet_GV']}")
+                    if row['DiemHaiLong_PH'] > 0: st.caption(f"⭐ PH chấm: {int(row['DiemHaiLong_PH'])} sao")
 
 # =============================================================================
 # 7. MODULE: PARENT (GIỮ NGUYÊN)
