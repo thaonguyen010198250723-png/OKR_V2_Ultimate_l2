@@ -21,7 +21,7 @@ st.set_page_config(
 )
 
 SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
-LOGO_URL = "logo FSC.png"
+LOGO_URL = "logo.png"
 
 SCHEMA = {
     'Users': ['Email', 'Password', 'Role', 'HoTen', 'Lop', 'EmailPH', 'SiSo'],
@@ -36,7 +36,7 @@ if 'user' not in st.session_state:
     st.session_state.user = None
 
 # =============================================================================
-# 2. XỬ LÝ DỮ LIỆU (BACKEND - GIỮ NGUYÊN TUYỆT ĐỐI)
+# 2. XỬ LÝ DỮ LIỆU & BACKEND AN TOÀN (UPDATED)
 # =============================================================================
 
 def get_client():
@@ -85,7 +85,52 @@ def load_data(sheet_name):
 def clear_cache():
     st.cache_data.clear()
 
+# --- SAFE FUNCTIONS (NEW) ---
+
+def safe_delete_user(email):
+    """Xóa dòng User dựa trên Email an toàn bằng gspread"""
+    try:
+        client = get_client()
+        sh = client.open_by_key(SHEET_ID)
+        ws = sh.worksheet('Users')
+        cell = ws.find(email, in_column=1) # Cột Email là cột 1
+        if cell:
+            ws.delete_rows(cell.row)
+            clear_cache()
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Lỗi xóa user: {e}")
+        return False
+
+def safe_update_user(email, col_name, new_val):
+    """Cập nhật 1 ô dữ liệu của User an toàn"""
+    try:
+        client = get_client()
+        sh = client.open_by_key(SHEET_ID)
+        ws = sh.worksheet('Users')
+        
+        # Map column name to index (1-based)
+        headers = SCHEMA['Users']
+        try:
+            col_idx = headers.index(col_name) + 1
+        except ValueError:
+            return False
+            
+        cell = ws.find(email, in_column=1)
+        if cell:
+            ws.update_cell(cell.row, col_idx, new_val)
+            clear_cache()
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Lỗi cập nhật user: {e}")
+        return False
+
+# --- LEGACY HELPERS (KEPT FOR COMPATIBILITY BUT USED CAREFULLY) ---
+
 def save_df(sheet_name, df):
+    """Ghi đè Sheet (Chỉ dùng khi update batch lớn hoặc các bảng không phải Users)"""
     try:
         client = get_client()
         ws = client.open_by_key(SHEET_ID).worksheet(sheet_name)
@@ -125,7 +170,7 @@ def batch_append(sheet_name, list_data):
         return False
 
 # =============================================================================
-# 3. UTILITIES & SIDEBAR (GIỮ NGUYÊN)
+# 3. UTILITIES & SIDEBAR
 # =============================================================================
 
 def calculate_progress(actual, target):
@@ -184,7 +229,7 @@ def generate_word_report(hs_data_list, df_okr, df_rev, period):
 def sidebar_controller():
     with st.sidebar:
         try: st.image(LOGO_URL, width=80)
-        except: st.write("🏫 **FPT SCHOOL OKR**")
+        except: st.write("🏫 **SCHOOL OKR**")
         if st.session_state.user:
             u = st.session_state.user
             st.info(f"👤 {u['HoTen']}\nRole: {u['Role']}")
@@ -201,18 +246,17 @@ def sidebar_controller():
             is_open = (status == 'Mở')
             if is_open: st.success(f"Trạng thái: {status} 🟢")
             else: st.error(f"Trạng thái: {status} 🔒")
+            
             with st.expander("🔑 Đổi mật khẩu"):
                 with st.form("cp"):
                     np = st.text_input("Mật khẩu mới", type="password")
                     if st.form_submit_button("Lưu"):
-                        df_u = load_data('Users')
+                        # Use safe update for password
                         target = u['ChildEmail'] if u['Role'] == 'PhuHuynh' else u['Email']
-                        mask = df_u['Email'] == target
-                        if mask.any():
-                            df_u.loc[mask, 'Password'] = np
-                            save_df('Users', df_u)
+                        if safe_update_user(target, 'Password', np):
                             st.success("Đổi thành công!")
-                        else: st.error("Lỗi tìm user")
+                        else:
+                            st.error("Lỗi cập nhật.")
             st.divider()
             if st.button("Đăng xuất", use_container_width=True):
                 st.session_state.user = None
@@ -252,7 +296,7 @@ def login_ui():
                 st.error("Sai thông tin đăng nhập.")
 
 # =============================================================================
-# 4. ADMIN MODULE (GIỮ NGUYÊN)
+# 4. MODULE: ADMIN (SỬ DỤNG SAFE FUNCTIONS)
 # =============================================================================
 
 def admin_view(period, is_open):
@@ -316,11 +360,11 @@ def admin_view(period, is_open):
             if not df_gv.empty:
                 del_gv = st.selectbox("Chọn GV xóa", df_gv['Email'])
                 if st.button("Xóa GV", type="primary"):
-                    df_all = load_data('Users')
-                    df_all = df_all[df_all['Email'] != del_gv]
-                    save_df('Users', df_all)
-                    st.success("Đã xóa!")
-                    st.rerun()
+                    if safe_delete_user(del_gv):
+                        st.success("Đã xóa!")
+                        st.rerun()
+                    else:
+                        st.error("Lỗi xóa.")
         with c2:
             st.write("Thêm GV")
             with st.form("add_gv"):
@@ -349,7 +393,7 @@ def admin_view(period, is_open):
                     st.rerun()
 
 # =============================================================================
-# 5. TEACHER MODULE (GIỮ NGUYÊN)
+# 5. TEACHER MODULE (SAFE UPDATES)
 # =============================================================================
 
 def teacher_view(period, is_open):
@@ -359,6 +403,8 @@ def teacher_view(period, is_open):
     if not my_class:
         st.error("Tài khoản chưa có Lớp.")
         return
+    
+    # Load data for read
     df_users_all = load_data('Users')
     df_hs = df_users_all[(df_users_all['Role'] == 'HocSinh') & (df_users_all['Lop'] == my_class)]
     df_okr = load_data('OKRs')
@@ -459,22 +505,27 @@ def teacher_view(period, is_open):
                     rst = st.checkbox("Reset Pass (123)")
                     dele = st.checkbox("Xóa Tài khoản")
                     if st.form_submit_button("Thực hiện"):
-                        idx = df_users_all[df_users_all['Email'] == sel_hs].index
-                        if not idx.empty:
-                            real_idx = idx[0]
-                            if dele:
-                                df_users_all = df_users_all.drop(real_idx)
-                                save_df('Users', df_users_all)
+                        # SAFE LOGIC USING HELPER FUNCTIONS
+                        if dele:
+                            if safe_delete_user(sel_hs):
                                 st.success("Đã xóa!")
                                 st.rerun()
-                            else:
-                                if ne: df_users_all.at[real_idx, 'Email'] = ne
-                                if np: df_users_all.at[real_idx, 'EmailPH'] = np
-                                if rst: df_users_all.at[real_idx, 'Password'] = "123"
-                                save_df('Users', df_users_all)
-                                st.success("Đã cập nhật!")
+                            else: st.error("Lỗi xóa.")
+                        else:
+                            success = True
+                            if ne: 
+                                if not safe_update_user(sel_hs, 'Email', ne): success = False
+                            if np: 
+                                if not safe_update_user(sel_hs, 'EmailPH', np): success = False
+                            if rst: 
+                                if not safe_update_user(sel_hs, 'Password', '123'): success = False
+                            
+                            if success:
+                                st.success("Cập nhật thành công!")
                                 st.rerun()
-                        else: st.error("Lỗi tìm dữ liệu gốc.")
+                            else:
+                                st.error("Có lỗi xảy ra khi cập nhật.")
+
         with c2:
             st.markdown("#### ➕ Thêm HS")
             with st.form("add_hs_manual"):
@@ -515,7 +566,7 @@ def teacher_view(period, is_open):
                 st.download_button("Download Class", bio, f"OKR_{my_class}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 # =============================================================================
-# 6. STUDENT MODULE (REWRITTEN: FIXED DECIMAL & KEY ISSUE)
+# 6. STUDENT MODULE (FIXED & REORGANIZED)
 # =============================================================================
 
 def student_view(period, is_open):
@@ -528,7 +579,7 @@ def student_view(period, is_open):
     df_rev = load_data('FinalReviews')
     rev = df_rev[(df_rev['Email'] == user['Email']) & (df_rev['Dot'] == period)]
 
-    # --- 1. REVIEWS & FEEDBACK ---
+    # --- 1. REVIEWS & FEEDBACK (UPDATED ORDER) ---
     st.markdown("### 📝 Tổng kết & Đánh giá")
     
     gv_txt = "Chưa có nhận xét."
@@ -617,7 +668,9 @@ def student_view(period, is_open):
                         c2.caption(f"{prog_display:.1f}%")
 
                         if c3.button("Cập nhật", key=f"btn_up_{row['ID']}"):
-                            # Update by ID
+                            # Update by ID - Uses full save currently as OKR safe update is complex, 
+                            # but users are protected by safe functions elsewhere.
+                            # Finding global index first to be safe.
                             idx = df_okr[df_okr['ID'] == row['ID']].index[0]
                             df_okr.at[idx, 'ThucDat'] = new_act
                             df_okr.at[idx, 'TienDo'] = prog_display
