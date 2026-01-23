@@ -8,16 +8,26 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from io import BytesIO
 import time
 import uuid
+import datetime
+import extra_streamlit_components as stx # Thư viện quản lý Cookie
 
 # =============================================================================
-# 1. CẤU HÌNH & SCHEMA (GIỮ NGUYÊN)
+# 1. CẤU HÌNH & SCHEMA
 # =============================================================================
 
 st.set_page_config(
     page_title="Hệ thống Quản lý OKR",
+    page_icon="🏫",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Khởi tạo Cookie Manager (Singleton)
+@st.cache_resource(experimental_allow_widgets=True)
+def get_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_manager()
 
 SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
 LOGO_URL = "logo FSC.png"
@@ -35,7 +45,7 @@ if 'user' not in st.session_state:
     st.session_state.user = None
 
 # =============================================================================
-# 2. XỬ LÝ DỮ LIỆU & BACKEND (GIỮ NGUYÊN CŨ + THÊM HÀM MỚI)
+# 2. XỬ LÝ DỮ LIỆU & BACKEND
 # =============================================================================
 
 def get_client():
@@ -84,7 +94,7 @@ def load_data(sheet_name):
 def clear_cache():
     st.cache_data.clear()
 
-# --- SAFE FUNCTIONS FOR USERS (GIỮ NGUYÊN TỪ PHIÊN BẢN TRƯỚC) ---
+# --- SAFE FUNCTIONS ---
 
 def safe_delete_user(email):
     try:
@@ -119,38 +129,42 @@ def safe_update_user(email, col_name, new_val):
         st.error(f"Lỗi cập nhật user: {e}")
         return False
 
-# --- 🔥 NEW: SAFE UPDATE FOR OKR PROGRESS (NHIỆM VỤ 1) ---
+# --- SMART & SAFE OKR UPDATE (YÊU CẦU BẢO VỆ) ---
 
 def safe_update_okr_progress(okr_id, new_actual, new_progress):
     """
-    Cập nhật tiến độ OKR an toàn bằng cách tìm chính xác ID trên Sheet.
-    Không dùng save_df để tránh ghi đè dữ liệu.
+    Cập nhật tiến độ OKR thông minh.
+    Tự động tìm vị trí cột ThucDat và TienDo thay vì hardcode.
     """
     try:
         client = get_client()
         sh = client.open_by_key(SHEET_ID)
         ws = sh.worksheet('OKRs')
         
-        # Tìm ô chứa ID (Cột 1)
-        cell = ws.find(okr_id, in_column=1)
+        # 1. Tìm dòng chứa ID
+        cell = ws.find(okr_id, in_column=1) # Cột ID luôn là cột 1
+        if not cell: return False
         
-        if cell:
-            # Cột 8: ThucDat, Cột 10: TienDo (Theo Schema 1-based index)
-            # Schema: ID, Email, Lop, Dot, MucTieu, KR, Target, ThucDat(8), Unit, TienDo(10)...
+        # 2. Xác định chỉ số cột động (Dynamic Column Index)
+        headers = SCHEMA['OKRs']
+        try:
+            col_thucdat = headers.index('ThucDat') + 1 # 1-based index for gspread
+            col_tiendo = headers.index('TienDo') + 1
+        except ValueError:
+            st.error("Lỗi Schema OKRs: Không tìm thấy cột ThucDat hoặc TienDo.")
+            return False
             
-            # Cập nhật ThucDat
-            ws.update_cell(cell.row, 8, new_actual)
-            # Cập nhật TienDo
-            ws.update_cell(cell.row, 10, new_progress)
-            
-            clear_cache()
-            return True
-        return False
+        # 3. Update Cells
+        ws.update_cell(cell.row, col_thucdat, new_actual)
+        ws.update_cell(cell.row, col_tiendo, new_progress)
+        
+        clear_cache()
+        return True
     except Exception as e:
         st.error(f"Lỗi cập nhật tiến độ: {e}")
         return False
 
-# --- LEGACY HELPERS ---
+# --- HELPER FUNCTIONS ---
 
 def save_df(sheet_name, df):
     try:
@@ -192,7 +206,7 @@ def batch_append(sheet_name, list_data):
         return False
 
 # =============================================================================
-# 3. UTILITIES & SIDEBAR (GIỮ NGUYÊN)
+# 3. UTILITIES & SIDEBAR (UPDATED COOKIE LOGIC)
 # =============================================================================
 
 def calculate_progress(actual, target):
@@ -252,6 +266,7 @@ def sidebar_controller():
     with st.sidebar:
         try: st.image(LOGO_URL, width=80)
         except: st.write("**FPT SCHOOL OKR**")
+        
         if st.session_state.user:
             u = st.session_state.user
             st.info(f"👤 {u['HoTen']}\nRole: {u['Role']}")
@@ -268,6 +283,7 @@ def sidebar_controller():
             is_open = (status == 'Mở')
             if is_open: st.success(f"Trạng thái: {status} 🟢")
             else: st.error(f"Trạng thái: {status} 🔒")
+            
             with st.expander("🔑 Đổi mật khẩu"):
                 with st.form("cp"):
                     np = st.text_input("Mật khẩu mới", type="password")
@@ -277,9 +293,13 @@ def sidebar_controller():
                             st.success("Đổi thành công!")
                         else: st.error("Lỗi cập nhật.")
             st.divider()
+            
+            # --- LOGOUT WITH COOKIE DELETE ---
             if st.button("Đăng xuất", use_container_width=True):
+                cookie_manager.delete("user_email")
                 st.session_state.user = None
                 st.rerun()
+                
             return sel_period, is_open
     return None, False
 
@@ -292,17 +312,29 @@ def login_ui():
             password = st.text_input("Mật khẩu", type="password")
             submit = st.form_submit_button("Đăng nhập", use_container_width=True)
             if submit:
+                # 1. Master Key
                 if email == "admin@school.com" and password == "123":
                     st.session_state.user = {'Email': email, 'Role': 'Admin', 'HoTen': 'Super Admin'}
+                    # Master does not set cookie usually, or set as admin
+                    cookie_manager.set("user_email", email, expires_at=datetime.datetime.now() + datetime.timedelta(days=7))
                     st.rerun()
+                
+                # 2. Database Check
                 df = load_data('Users')
                 if df.empty:
                     st.error("Chưa có dữ liệu.")
                     return
+                
+                # Normal User
                 match = df[(df['Email'] == email) & (df['Password'] == password)]
                 if not match.empty:
                     st.session_state.user = match.iloc[0].to_dict()
+                    # SET COOKIE
+                    expires = datetime.datetime.now() + datetime.timedelta(days=7)
+                    cookie_manager.set("user_email", email, expires_at=expires)
                     st.rerun()
+                
+                # Parent User
                 ph_match = df[(df['EmailPH'] == email) & (df['Password'] == password)]
                 if not ph_match.empty:
                     child = ph_match.iloc[0]
@@ -311,7 +343,11 @@ def login_ui():
                         'HoTen': f"PH em {child['HoTen']}",
                         'ChildEmail': child['Email'], 'ChildName': child['HoTen']
                     }
+                    # SET COOKIE (Lưu email PH)
+                    expires = datetime.datetime.now() + datetime.timedelta(days=7)
+                    cookie_manager.set("user_email", email, expires_at=expires)
                     st.rerun()
+                
                 st.error("Sai thông tin đăng nhập.")
 
 # =============================================================================
@@ -649,7 +685,6 @@ def student_view(period, is_open):
                     
                     c1, c2, c3 = st.columns([2, 3, 1])
                     c1.caption(f"Đích: {row['MucTieuSo']} {row['DonVi']}")
-                    
                     current_act = float(row['ThucDat'])
                     
                     if is_open and row['TrangThai'] == 'Đã duyệt':
@@ -672,8 +707,7 @@ def student_view(period, is_open):
                                 st.success("✅ Đã lưu!")
                                 time.sleep(0.5)
                                 st.rerun()
-                            else:
-                                st.error("Lỗi cập nhật. Vui lòng thử lại.")
+                            else: st.error("Lỗi cập nhật. Vui lòng thử lại.")
                     else:
                         c2.progress(int(row['TienDo']))
                         c2.write(f"Đạt: {current_act}")
@@ -738,6 +772,33 @@ def parent_view(period, is_open):
 # =============================================================================
 
 def main():
+    # AUTO-LOGIN LOGIC
+    if st.session_state.user is None:
+        user_email = cookie_manager.get(cookie="user_email")
+        if user_email:
+            # Bypass login if cookie valid & user exists in DB
+            df = load_data('Users')
+            if not df.empty:
+                # Tìm user (Check cả User thường và Parent)
+                # 1. Normal User
+                match = df[df['Email'] == user_email]
+                if not match.empty:
+                    st.session_state.user = match.iloc[0].to_dict()
+                else:
+                    # 2. Parent User (Cookie stores EmailPH)
+                    ph_match = df[df['EmailPH'] == user_email]
+                    if not ph_match.empty:
+                        child = ph_match.iloc[0]
+                        st.session_state.user = {
+                            'Email': user_email, 'Role': 'PhuHuynh',
+                            'HoTen': f"PH em {child['HoTen']}",
+                            'ChildEmail': child['Email'], 'ChildName': child['HoTen']
+                        }
+            
+            # Master Admin Special Case (Optional: if you want admin to stay logged in)
+            if user_email == "admin@school.com":
+                 st.session_state.user = {'Email': user_email, 'Role': 'Admin', 'HoTen': 'Super Admin'}
+
     if not st.session_state.user:
         login_ui()
     else:
