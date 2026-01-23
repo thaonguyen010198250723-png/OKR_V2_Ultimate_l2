@@ -17,7 +17,6 @@ import extra_streamlit_components as stx
 
 st.set_page_config(
     page_title="Hệ thống Quản lý OKR",
-    page_icon="🏫",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -26,7 +25,7 @@ st.set_page_config(
 cookie_manager = stx.CookieManager()
 
 SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
-LOGO_URL = "logo.png"
+LOGO_URL = "logo FSC.png"
 
 # Schema chuẩn
 SCHEMA = {
@@ -276,7 +275,7 @@ def generate_word_report(hs_data_list, df_okr, df_rev, period):
 def sidebar_controller():
     with st.sidebar:
         try: st.image(LOGO_URL, width=80)
-        except: st.write("🏫 **SCHOOL OKR**")
+        except: st.write("**FPT SCHOOL OKR**")
         
         if st.session_state.user:
             u = st.session_state.user
