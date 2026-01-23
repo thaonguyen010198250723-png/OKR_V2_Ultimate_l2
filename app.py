@@ -9,10 +9,10 @@ from io import BytesIO
 import time
 import uuid
 import datetime
-import extra_streamlit_components as stx # Thư viện quản lý Cookie
+import extra_streamlit_components as stx
 
 # =============================================================================
-# 1. CẤU HÌNH & SCHEMA
+# 1. CẤU HÌNH & KHỞI TẠO (UPDATED)
 # =============================================================================
 
 st.set_page_config(
@@ -22,15 +22,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Khởi tạo Cookie Manager (Singleton)
-@st.cache_resource()
-def get_manager():
-    return stx.CookieManager()
-
-cookie_manager = get_manager()
+# --- FIX: KHỞI TẠO TRỰC TIẾP (KHÔNG DÙNG CACHE) ---
+cookie_manager = stx.CookieManager()
 
 SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
-LOGO_URL = "logo FSC.png"
+LOGO_URL = "logo.png"
 
 SCHEMA = {
     'Users': ['Email', 'Password', 'Role', 'HoTen', 'Lop', 'EmailPH', 'SiSo'],
@@ -45,7 +41,7 @@ if 'user' not in st.session_state:
     st.session_state.user = None
 
 # =============================================================================
-# 2. XỬ LÝ DỮ LIỆU & BACKEND
+# 2. XỬ LÝ DỮ LIỆU & BACKEND (GIỮ NGUYÊN)
 # =============================================================================
 
 def get_client():
@@ -129,7 +125,7 @@ def safe_update_user(email, col_name, new_val):
         st.error(f"Lỗi cập nhật user: {e}")
         return False
 
-# --- SMART & SAFE OKR UPDATE (YÊU CẦU BẢO VỆ) ---
+# --- SMART & SAFE OKR UPDATE (GIỮ NGUYÊN LOGIC THÔNG MINH) ---
 
 def safe_update_okr_progress(okr_id, new_actual, new_progress):
     """
@@ -265,7 +261,7 @@ def generate_word_report(hs_data_list, df_okr, df_rev, period):
 def sidebar_controller():
     with st.sidebar:
         try: st.image(LOGO_URL, width=80)
-        except: st.write("**FPT SCHOOL OKR**")
+        except: st.write("🏫 **SCHOOL OKR**")
         
         if st.session_state.user:
             u = st.session_state.user
@@ -315,7 +311,6 @@ def login_ui():
                 # 1. Master Key
                 if email == "admin@school.com" and password == "123":
                     st.session_state.user = {'Email': email, 'Role': 'Admin', 'HoTen': 'Super Admin'}
-                    # Master does not set cookie usually, or set as admin
                     cookie_manager.set("user_email", email, expires_at=datetime.datetime.now() + datetime.timedelta(days=7))
                     st.rerun()
                 
@@ -343,7 +338,7 @@ def login_ui():
                         'HoTen': f"PH em {child['HoTen']}",
                         'ChildEmail': child['Email'], 'ChildName': child['HoTen']
                     }
-                    # SET COOKIE (Lưu email PH)
+                    # SET COOKIE
                     expires = datetime.datetime.now() + datetime.timedelta(days=7)
                     cookie_manager.set("user_email", email, expires_at=expires)
                     st.rerun()
@@ -702,7 +697,6 @@ def student_view(period, is_open):
                         c2.caption(f"{prog_display:.1f}%")
 
                         if c3.button("Cập nhật", key=f"btn_up_{row['ID']}"):
-                            # SAFE UPDATE CALL
                             if safe_update_okr_progress(row['ID'], new_act, prog_display):
                                 st.success("✅ Đã lưu!")
                                 time.sleep(0.5)
@@ -772,20 +766,15 @@ def parent_view(period, is_open):
 # =============================================================================
 
 def main():
-    # AUTO-LOGIN LOGIC
     if st.session_state.user is None:
         user_email = cookie_manager.get(cookie="user_email")
         if user_email:
-            # Bypass login if cookie valid & user exists in DB
             df = load_data('Users')
             if not df.empty:
-                # Tìm user (Check cả User thường và Parent)
-                # 1. Normal User
                 match = df[df['Email'] == user_email]
                 if not match.empty:
                     st.session_state.user = match.iloc[0].to_dict()
                 else:
-                    # 2. Parent User (Cookie stores EmailPH)
                     ph_match = df[df['EmailPH'] == user_email]
                     if not ph_match.empty:
                         child = ph_match.iloc[0]
@@ -794,8 +783,6 @@ def main():
                             'HoTen': f"PH em {child['HoTen']}",
                             'ChildEmail': child['Email'], 'ChildName': child['HoTen']
                         }
-            
-            # Master Admin Special Case (Optional: if you want admin to stay logged in)
             if user_email == "admin@school.com":
                  st.session_state.user = {'Email': user_email, 'Role': 'Admin', 'HoTen': 'Super Admin'}
 
