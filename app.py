@@ -12,7 +12,7 @@ import datetime
 import extra_streamlit_components as stx
 
 # =============================================================================
-# 1. CẤU HÌNH & KHỞI TẠO (UPDATED)
+# 1. CẤU HÌNH & KHỞI TẠO (FIXED: NO CACHE FOR COOKIE MANAGER)
 # =============================================================================
 
 st.set_page_config(
@@ -22,12 +22,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- FIX: KHỞI TẠO TRỰC TIẾP (KHÔNG DÙNG CACHE) ---
+# KHỞI TẠO TRỰC TIẾP (Fix CachedWidgetWarning)
 cookie_manager = stx.CookieManager()
 
 SHEET_ID = "1iNzV2CIrPhdLqqXChGkTS-CicpAtEGRt9Qy0m0bzR0k"
 LOGO_URL = "logo.png"
 
+# Schema chuẩn
 SCHEMA = {
     'Users': ['Email', 'Password', 'Role', 'HoTen', 'Lop', 'EmailPH', 'SiSo'],
     'Periods': ['TenDot', 'TrangThai'],
@@ -41,7 +42,7 @@ if 'user' not in st.session_state:
     st.session_state.user = None
 
 # =============================================================================
-# 2. XỬ LÝ DỮ LIỆU & BACKEND (GIỮ NGUYÊN)
+# 2. XỬ LÝ DỮ LIỆU & BACKEND (OPTIMIZED CACHE TTL=600)
 # =============================================================================
 
 def get_client():
@@ -54,7 +55,8 @@ def get_client():
         st.error(f"🔴 Lỗi kết nối Google API: {e}")
         return None
 
-@st.cache_data(ttl=10)
+# FIX: Tăng TTL lên 600s (10 phút) để tránh lỗi Quota Exceeded
+@st.cache_data(ttl=600)
 def load_data(sheet_name):
     client = get_client()
     if not client: return pd.DataFrame()
@@ -66,15 +68,23 @@ def load_data(sheet_name):
             ws = sh.add_worksheet(title=sheet_name, rows=1000, cols=20)
             ws.append_row(SCHEMA[sheet_name])
             return pd.DataFrame(columns=SCHEMA[sheet_name])
+        
         data = ws.get_all_records()
         df = pd.DataFrame(data)
+        
+        # Auto-Schema Migration
         expected_cols = SCHEMA[sheet_name]
         if df.empty: return pd.DataFrame(columns=expected_cols)
+        
         for col in expected_cols:
             if col not in df.columns:
                 val = 0 if col in ['SiSo', 'MucTieuSo', 'ThucDat', 'TienDo', 'DiemHaiLong_PH'] else ""
                 df[col] = val
+        
+        # Reorder columns
         df = df[[c for c in expected_cols if c in df.columns] + [c for c in df.columns if c not in expected_cols]]
+        
+        # Type Casting
         if sheet_name == 'Users':
             df['SiSo'] = pd.to_numeric(df['SiSo'], errors='coerce').fillna(0).astype(int)
             df['Password'] = df['Password'].astype(str)
@@ -82,15 +92,17 @@ def load_data(sheet_name):
         if sheet_name == 'OKRs':
             for c in ['MucTieuSo', 'ThucDat', 'TienDo', 'DiemHaiLong_PH']:
                 df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+                
         return df
     except Exception as e:
         st.error(f"Lỗi tải dữ liệu {sheet_name}: {e}")
         return pd.DataFrame()
 
 def clear_cache():
+    """Xóa cache khi có hành động Ghi để tải lại dữ liệu mới nhất"""
     st.cache_data.clear()
 
-# --- SAFE FUNCTIONS ---
+# --- SAFE FUNCTIONS (DIRECT GSPREAD MANIPULATION) ---
 
 def safe_delete_user(email):
     try:
@@ -100,7 +112,7 @@ def safe_delete_user(email):
         cell = ws.find(email, in_column=1)
         if cell:
             ws.delete_rows(cell.row)
-            clear_cache()
+            clear_cache() # Quan trọng: Xóa cache sau khi ghi
             return True
         return False
     except Exception as e:
@@ -112,9 +124,12 @@ def safe_update_user(email, col_name, new_val):
         client = get_client()
         sh = client.open_by_key(SHEET_ID)
         ws = sh.worksheet('Users')
-        headers = SCHEMA['Users']
+        
+        # Dynamic Header Lookup
+        headers = ws.row_values(1)
         try: col_idx = headers.index(col_name) + 1
         except ValueError: return False
+        
         cell = ws.find(email, in_column=1)
         if cell:
             ws.update_cell(cell.row, col_idx, new_val)
@@ -125,12 +140,11 @@ def safe_update_user(email, col_name, new_val):
         st.error(f"Lỗi cập nhật user: {e}")
         return False
 
-# --- SMART & SAFE OKR UPDATE (GIỮ NGUYÊN LOGIC THÔNG MINH) ---
+# --- SMART & SAFE OKR UPDATE (HEADER LOOKUP) ---
 
 def safe_update_okr_progress(okr_id, new_actual, new_progress):
     """
-    Cập nhật tiến độ OKR thông minh.
-    Tự động tìm vị trí cột ThucDat và TienDo thay vì hardcode.
+    Cập nhật tiến độ OKR bằng cách tìm ID và tên cột động.
     """
     try:
         client = get_client()
@@ -138,29 +152,30 @@ def safe_update_okr_progress(okr_id, new_actual, new_progress):
         ws = sh.worksheet('OKRs')
         
         # 1. Tìm dòng chứa ID
-        cell = ws.find(okr_id, in_column=1) # Cột ID luôn là cột 1
+        cell = ws.find(okr_id, in_column=1)
         if not cell: return False
         
-        # 2. Xác định chỉ số cột động (Dynamic Column Index)
-        headers = SCHEMA['OKRs']
+        # 2. Lấy header thực tế từ Sheet để tìm index cột (Smart Lookup)
+        headers = ws.row_values(1)
+        
         try:
-            col_thucdat = headers.index('ThucDat') + 1 # 1-based index for gspread
+            col_thucdat = headers.index('ThucDat') + 1
             col_tiendo = headers.index('TienDo') + 1
         except ValueError:
-            st.error("Lỗi Schema OKRs: Không tìm thấy cột ThucDat hoặc TienDo.")
+            st.error("Lỗi cấu trúc Sheet: Không tìm thấy cột ThucDat/TienDo.")
             return False
             
         # 3. Update Cells
         ws.update_cell(cell.row, col_thucdat, new_actual)
         ws.update_cell(cell.row, col_tiendo, new_progress)
         
-        clear_cache()
+        clear_cache() # Clear cache để User thấy data mới
         return True
     except Exception as e:
         st.error(f"Lỗi cập nhật tiến độ: {e}")
         return False
 
-# --- HELPER FUNCTIONS ---
+# --- WRAPPER FUNCTIONS (ALWAYS CLEAR CACHE ON WRITE) ---
 
 def save_df(sheet_name, df):
     try:
@@ -202,7 +217,7 @@ def batch_append(sheet_name, list_data):
         return False
 
 # =============================================================================
-# 3. UTILITIES & SIDEBAR (UPDATED COOKIE LOGIC)
+# 3. UTILITIES & SIDEBAR
 # =============================================================================
 
 def calculate_progress(actual, target):
@@ -290,7 +305,6 @@ def sidebar_controller():
                         else: st.error("Lỗi cập nhật.")
             st.divider()
             
-            # --- LOGOUT WITH COOKIE DELETE ---
             if st.button("Đăng xuất", use_container_width=True):
                 cookie_manager.delete("user_email")
                 st.session_state.user = None
@@ -314,7 +328,7 @@ def login_ui():
                     cookie_manager.set("user_email", email, expires_at=datetime.datetime.now() + datetime.timedelta(days=7))
                     st.rerun()
                 
-                # 2. Database Check
+                # 2. DB Check
                 df = load_data('Users')
                 if df.empty:
                     st.error("Chưa có dữ liệu.")
@@ -324,7 +338,6 @@ def login_ui():
                 match = df[(df['Email'] == email) & (df['Password'] == password)]
                 if not match.empty:
                     st.session_state.user = match.iloc[0].to_dict()
-                    # SET COOKIE
                     expires = datetime.datetime.now() + datetime.timedelta(days=7)
                     cookie_manager.set("user_email", email, expires_at=expires)
                     st.rerun()
@@ -338,7 +351,6 @@ def login_ui():
                         'HoTen': f"PH em {child['HoTen']}",
                         'ChildEmail': child['Email'], 'ChildName': child['HoTen']
                     }
-                    # SET COOKIE
                     expires = datetime.datetime.now() + datetime.timedelta(days=7)
                     cookie_manager.set("user_email", email, expires_at=expires)
                     st.rerun()
@@ -346,7 +358,7 @@ def login_ui():
                 st.error("Sai thông tin đăng nhập.")
 
 # =============================================================================
-# 4. ADMIN MODULE (GIỮ NGUYÊN)
+# 4. MODULE: ADMIN
 # =============================================================================
 
 def admin_view(period, is_open):
@@ -442,7 +454,7 @@ def admin_view(period, is_open):
                     st.rerun()
 
 # =============================================================================
-# 5. TEACHER MODULE (GIỮ NGUYÊN)
+# 5. TEACHER MODULE
 # =============================================================================
 
 def teacher_view(period, is_open):
@@ -610,7 +622,7 @@ def teacher_view(period, is_open):
                 st.download_button("Download Class", bio, f"OKR_{my_class}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 # =============================================================================
-# 6. STUDENT MODULE (FIXED & SAFE UPDATE)
+# 6. STUDENT MODULE (SMART & SAFE)
 # =============================================================================
 
 def student_view(period, is_open):
@@ -697,6 +709,7 @@ def student_view(period, is_open):
                         c2.caption(f"{prog_display:.1f}%")
 
                         if c3.button("Cập nhật", key=f"btn_up_{row['ID']}"):
+                            # SAFE UPDATE CALL
                             if safe_update_okr_progress(row['ID'], new_act, prog_display):
                                 st.success("✅ Đã lưu!")
                                 time.sleep(0.5)
