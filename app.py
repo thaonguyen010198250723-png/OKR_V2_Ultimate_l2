@@ -15,11 +15,23 @@ import extra_streamlit_components as stx
 # 1. CẤU HÌNH & KHỞI TẠO (FIXED: NO CACHE FOR COOKIE MANAGER)
 # =============================================================================
 
-st.set_page_config(
+st.set_page_config
+    # --- ẨN MENU STREAMLIT, NÚT FORK & FOOTER ---
+st.markdown("""
+    <style>
+    /* Ẩn menu chính ở góc phải */
+    #MainMenu {visibility: hidden;}
+    /* Ẩn footer "Made with Streamlit" */
+    footer {visibility: hidden;}
+    /* Ẩn thanh header màu mè phía trên */
+    header {visibility: hidden;}
+    /* Ẩn nút Deploy/Fork nếu còn sót lại */
+    .stAppDeployButton {display:none;}
+    </style>
+""", unsafe_allow_html=True)
     page_title="Hệ thống Quản lý OKR",
     layout="wide",
     initial_sidebar_state="expanded"
-)
 
 # KHỞI TẠO TRỰC TIẾP (Fix CachedWidgetWarning)
 cookie_manager = stx.CookieManager()
